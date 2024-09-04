@@ -57,6 +57,6 @@ vectorstore=PineconeVectorStore.from_documents(documents,index_name=index_name,e
 query="list certifications"
 
 similar_docs=vectorstore.similarity_search(query)
-similar_docs[0]
+print(similar_docs[0])
 
 
