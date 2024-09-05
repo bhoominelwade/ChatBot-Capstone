@@ -1,45 +1,52 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List
 import os
-import uvicorn  # Ensure uvicorn is imported
+import uvicorn
 
 app = FastAPI()
 
 # Setup CORS middleware for the frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],  # or the port where your frontend will run
+    allow_origins=["http://localhost:3000"],  # Adjust as necessary
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-@app.get("/")
-async def root():
-    return {"message": "Welcome to the FastAPI server!"}
+# Serve static files and HTML files from the Frontend directory
+frontend_directory = os.path.abspath('../Frontend')
+app.mount("/static", StaticFiles(directory=frontend_directory), name="static")
 
+# Serve home.html at the root
+@app.get("/", response_class=HTMLResponse)
+async def root():
+    return FileResponse(os.path.join(frontend_directory, 'home.html'))
+
+# Serve admin.html via a specific route
+@app.get("/admin.html", response_class=HTMLResponse)
+async def admin():
+    return FileResponse(os.path.join(frontend_directory, 'admin.html'))
+
+# File upload handling
 @app.post("/upload/")
 async def upload_files(files: List[UploadFile] = File(...)):
+    upload_dir = '../Uploaded files'  # Ensure this path is correct and accessible
+    os.makedirs(upload_dir, exist_ok=True)  # Create the directory if it doesn't exist
+    
     file_details = []
     for file in files:
         contents = await file.read()  # Read file contents
-        file_path = f'./uploaded_files/{file.filename}'  # Define path to save file
+        file_path = os.path.join(upload_dir, file.filename)
         with open(file_path, 'wb') as f:
-            f.write(contents)  # Write the contents to a file
+            f.write(contents)  # Save file to disk
         file_details.append({'filename': file.filename, 'filesize': len(contents)})
+
     return {"message": f"Successfully processed {len(files)} files.", "file_details": file_details}
 
-@app.post("/chat/")
-async def chat(message: str):
-    # Placeholder for actual chat processing logic
-    response = process_chat_message(message)  # Assume this function handles chat logic
-    return {"response": response}
-
-def process_chat_message(message: str):
-    # Implement your chatbot logic here
-    # For now, it just echoes the message
-    return f"Chatbot response to the message: {message}"
 
 if __name__ == "__main__":
     uvicorn.run("app:app", host="0.0.0.0", port=8000, reload=True)

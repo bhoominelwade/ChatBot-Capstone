@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="X-UA-Compatible" content="ie=edge">
+    <title>Admin Panel - File Upload</title>
+</head>
+<body>
+    <header>
+        <h1>Admin Panel</h1>
+    </header>
+    <main>
+        <form id="uploadForm" enctype="multipart/form-data">
+            <label for="fileUpload">Upload Files:</label>
+            <input type="file" id="fileUpload" name="files" multiple>
+            <button type="button" onclick="uploadFiles()">Upload</button>
+        </form>
+        <div id="uploadStatus"></div>
+    </main>
+    <script src="/static/admin.js"></script>
+</body>
+</html>
