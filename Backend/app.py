@@ -31,6 +31,10 @@ async def root():
 async def admin():
     return FileResponse(os.path.join(frontend_directory, 'admin.html'))
 
+@app.get("/chat.html", response_class=HTMLResponse)
+async def admin():
+    return FileResponse(os.path.join(frontend_directory, 'chat.html'))
+
 # File upload handling
 @app.post("/upload/")
 async def upload_files(files: List[UploadFile] = File(...)):
