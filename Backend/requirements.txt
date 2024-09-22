@@ -1,0 +1,15 @@
+PyMuPDF
+pytesseract
+Pillow
+pandas
+python-docx
+openpyxl
+langchain
+langchain-community
+langchain-groq
+python-dotenv
+fastapi
+uvicorn
+pydantic
+python-multipart
+chromadb

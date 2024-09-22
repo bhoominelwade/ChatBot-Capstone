@@ -20,6 +20,8 @@ import uvicorn
 from pydantic import BaseModel
 import logging
 
+
+
 # Loading environment variables from .env file
 load_dotenv()
 
