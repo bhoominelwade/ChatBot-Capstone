@@ -1,11 +1,15 @@
+// index.jsx
 import React from 'react';
-import ReactDOM from 'react-dom';
- // Make sure this file exists, or adjust/remove this line if it doesn’t
-import App from './App';  // Import the App component
+import ReactDOM from 'react-dom/client';
+import App from './App';
+import { BrowserRouter } from 'react-router-dom';  // Import BrowserRouter
 
-ReactDOM.render(
+const root = ReactDOM.createRoot(document.getElementById('root'));
+
+root.render(
   <React.StrictMode>
-    <App />
-  </React.StrictMode>,
-  document.getElementById('root')
+    <BrowserRouter>  {/* Wrap App with BrowserRouter */}
+      <App />
+    </BrowserRouter>
+  </React.StrictMode>
 );

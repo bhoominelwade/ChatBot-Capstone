@@ -1,24 +1,43 @@
-import React, { useState } from "react";
+import React, { useState, useRef } from "react";
 import axios from 'axios';
+import {
+  Upload,
+  Bell,
+  BarChart2,
+  MessageSquare,
+  MoreVertical,
+  FileText,
+  FileImage,
+  FileSpreadsheet,
+  Send,
+} from "lucide-react";
 import "./AdminDashboard.css";
 
-const AdminDashboard = () => {
-  const [activeTab, setActiveTab] = useState("upload");
-  const [recentUploads, setRecentUploads] = useState([
-    { file: "report.pdf", size: "2.3 MB", uploaded: "2 days ago" },
-    { file: "presentation.pptx", size: "5.1 MB", uploaded: "1 week ago" },
-    { file: "invoice.xlsx", size: "1.2 MB", uploaded: "3 days ago" },
-  ]);
-  const [selectedFiles, setSelectedFiles] = useState([]);
+export default function AdminDashboard() {
+  const [activeTab, setActiveTab] = useState("Upload");
+  const [announcement, setAnnouncement] = useState("");
+  const [files, setFiles] = useState([]);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState(null);
+  const fileInputRef = useRef(null);
 
-  const handleFileSelect = (event) => {
-    const files = Array.from(event.target.files);
-    setSelectedFiles(files);
+  const tabs = [
+    { name: "Upload", icon: Upload },
+    { name: "Announcements", icon: Bell },
+    { name: "Stats", icon: BarChart2 },
+    { name: "Chatbot", icon: MessageSquare },
+  ];
+
+  const handleAnnouncementSubmit = (e) => {
+    e.preventDefault();
+    console.log("Announcement submitted:", announcement);
+    console.log("Uploaded files:", files);
+    setAnnouncement("");
+    setFiles([]);
   };
 
-  const handleFileUpload = async () => {
+  const handleFileUpload = async (e) => {
+    const selectedFiles = Array.from(e.target.files);
     setUploading(true);
     setUploadError(null);
     const formData = new FormData();
@@ -33,13 +52,13 @@ const AdminDashboard = () => {
         },
       });
       console.log(response.data);
-      const newUploads = selectedFiles.map((file) => ({
-        file: file.name,
-        size: `${(file.size / 1024 / 1024).toFixed(2)} MB`,
-        uploaded: "Just Now",
+      const newFiles = selectedFiles.map((file) => ({
+        name: file.name,
+        size: (file.size / 1024 / 1024).toFixed(2) + " MB",
+        uploaded: new Date().toLocaleDateString(),
+        icon: getFileIcon(file.name),
       }));
-      setRecentUploads([...newUploads, ...recentUploads]);
-      setSelectedFiles([]);
+      setFiles((prevFiles) => [...newFiles, ...prevFiles]);
     } catch (error) {
       console.error('Error uploading file:', error);
       setUploadError('Failed to upload files. Please try again.');
@@ -48,44 +67,56 @@ const AdminDashboard = () => {
     }
   };
 
-  const renderContent = () => {
-    switch (activeTab) {
-      case "upload":
-        return (
-          <div className="card">
-            <h3>Upload Files</h3>
-            <div className="upload-box">
-              <input
-                type="file"
-                id="file-select"
-                multiple
-                onChange={handleFileSelect}
-                hidden
-              />
-              <label htmlFor="file-select" className="upload-label">
-                Drag and drop files or click to select.
-              </label>
-            </div>
-            {selectedFiles.length > 0 && (
-              <div>
-                <p>Selected files:</p>
-                <ul>
-                  {selectedFiles.map((file, index) => (
-                    <li key={index}>{file.name}</li>
-                  ))}
-                </ul>
+  const triggerFileUpload = () => {
+    fileInputRef.current.click();
+  };
+
+  const getFileIcon = (fileName) => {
+    if (fileName.endsWith(".pdf")) return FileText;
+    if (fileName.endsWith(".pptx")) return FileImage;
+    if (fileName.endsWith(".xlsx")) return FileSpreadsheet;
+    return FileText;
+  };
+
+  return (
+    <div className="app-container">
+      <nav>
+        <h1>Nexus Control</h1>
+        <ul>
+          {tabs.map((tab) => (
+            <li key={tab.name}>
+              <button
+                className={activeTab === tab.name ? "active" : ""}
+                onClick={() => setActiveTab(tab.name)}
+              >
+                <tab.icon />
+                {tab.name}
+              </button>
+            </li>
+          ))}
+        </ul>
+      </nav>
+      <main>
+        {activeTab === "Upload" && (
+          <>
+            <h2>Data Upload Interface</h2>
+            <div className="card-1 card">
+              <div className="upload-area">
+                <p>Initiate data transfer or select files for upload.</p>
+                <button onClick={triggerFileUpload} disabled={uploading}>
+                  {uploading ? 'Uploading...' : 'Upload Files'}
+                </button>
+                <input
+                  type="file"
+                  ref={fileInputRef}
+                  className="hidden"
+                  onChange={handleFileUpload}
+                  multiple
+                />
               </div>
-            )}
-            <button 
-              className="upload-button" 
-              onClick={handleFileUpload}
-              disabled={selectedFiles.length === 0 || uploading}
-            >
-              {uploading ? 'Uploading...' : 'Upload'}
-            </button>
-            {uploadError && <p className="error-message">{uploadError}</p>}
-            <div className="recent-uploads-card">
-              <h3>Recent Uploads</h3>
+              {uploadError && <p className="error-message">{uploadError}</p>}
+            </div>
+            <div className="card">
               <table>
                 <thead>
                   <tr>
@@ -96,68 +127,78 @@ const AdminDashboard = () => {
                   </tr>
                 </thead>
                 <tbody>
-                  {recentUploads.map((upload, index) => (
+                  {files.map((file, index) => (
                     <tr key={index}>
-                      <td>{upload.file}</td>
-                      <td>{upload.size}</td>
-                      <td>{upload.uploaded}</td>
                       <td>
-                        <button className="action-btn">↔</button>
+                        <div className="file-info">
+                          <div className="file-icon">
+                            {file.icon && <file.icon />}
+                          </div>
+                          <span>{file.name}</span>
+                        </div>
+                      </td>
+                      <td>{file.size}</td>
+                      <td>{file.uploaded}</td>
+                      <td>
+                        <button className="action-button">
+                          <MoreVertical />
+                        </button>
                       </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
-          </div>
-        );
-      case "announcements":
-        return (
-          <div className="card">
-            <h3>Announcements</h3>
-            <p>Announcement functionality not implemented yet.</p>
-          </div>
-        );
-      case "stats":
-        return (
-          <div className="card">
-            <h3>User Stats</h3>
-            <p>User stats functionality not implemented yet.</p>
-          </div>
-        );
-      case "chatbot":
-        return (
-          <div className="card">
-            <h3>Chatbot Settings</h3>
-            <p>Chatbot settings functionality not implemented yet.</p>
-          </div>
-        );
-      default:
-        return null;
-    }
-  };
-
-  return (
-    <main className="admin-dashboard">
-      <header>
-        <h1>Admin Dashboard</h1>
-      </header>
-      <div className="tabs-container">
-        <div className="tabs">
-          {["upload", "announcements", "stats", "chatbot"].map((tab) => (
-            <button
-              key={tab}
-              className={activeTab === tab ? "tab active" : "tab"}
-              onClick={() => setActiveTab(tab)}
-            >
-              {tab.charAt(0).toUpperCase() + tab.slice(1).replace("-", " ")}
-            </button>
-          ))}
-        </div>
-      </div>
-      <div className="content-section">{renderContent()}</div>
-    </main>
+          </>
+        )}
+        {activeTab === "Announcements" && (
+          <>
+            <h2>Broadcast Announcements</h2>
+            <div className="card">
+              <form onSubmit={handleAnnouncementSubmit}>
+                <textarea
+                  value={announcement}
+                  onChange={(e) => setAnnouncement(e.target.value)}
+                  placeholder="Type your announcement here..."
+                />
+                <div className="button-group">
+                  <button type="submit" className="primary-button">
+                    <Send />
+                    Broadcast
+                  </button>
+                  <button type="button" className="secondary-button" onClick={triggerFileUpload}>
+                    <Upload />
+                    Upload Files
+                  </button>
+                  <input
+                    type="file"
+                    ref={fileInputRef}
+                    className="hidden"
+                    onChange={handleFileUpload}
+                    multiple
+                  />
+                </div>
+              </form>
+            </div>
+          </>
+        )}
+        {activeTab === "Stats" && (
+          <>
+            <h2>User Statistics</h2>
+            <div className="card">
+              <p>User stats functionality not implemented yet.</p>
+            </div>
+          </>
+        )}
+        {activeTab === "Chatbot" && (
+          <>
+            <h2>Chatbot Interface</h2>
+            <div className="card">
+              <p>Chatbot settings functionality not implemented yet.</p>
+            </div>
+          </>
+        )}
+      </main>
+    </div>
   );
-};
-
-export default AdminDashboard;
+}

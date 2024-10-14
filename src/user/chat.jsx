@@ -1,118 +1,171 @@
-import React, { useState, useEffect } from 'react';
-import axios from 'axios';
+import React, { useState, useRef, useEffect } from 'react';
+import axios from 'axios'; // Add axios for backend calls
 import './chat.css';
+import darkblue from "./assets/darkblue.mp4";
+import { UserCircle, MessageSquare, PlusCircle, Bell, Send, X, RefreshCw, Volume2 } from 'lucide-react';
 
-const Chat = () => {
-  const [chatMessages, setChatMessages] = useState([
-    { role: 'bot', content: 'Hello! How can I assist you today?' }
+const ChatbotUI = () => {
+  const [message, setMessage] = useState('');
+  const [messages, setMessages] = useState([
+    { text: 'Hello! How can I assist you today?', type: 'ai' }
   ]);
-  const [inputMessage, setInputMessage] = useState('');
-  const [isRightSideOpen, setIsRightSideOpen] = useState(true);
-  const [isLeftSideOpen, setIsLeftSideOpen] = useState(true);
-  const [isSending, setIsSending] = useState(false);
+  const [showAnnouncements, setShowAnnouncements] = useState(false);
+  const [showUserPanel, setShowUserPanel] = useState(false);
+  const [isSending, setIsSending] = useState(false); // For managing the send button state
 
-  const handleSendMessage = async () => {
-    if (inputMessage.trim() !== '' && !isSending) {
+  const videoRef = useRef(null);
+
+  const announcements = [
+    "New feature: Video calls now available!",
+    "Maintenance scheduled for tonight at 2 AM UTC",
+    "Check out our new dark mode in settings!"
+  ];
+
+  const sendMessage = async () => {
+    if (message.trim() && !isSending) {
+      // Add the user's message to the chat
+      const userMessage = { text: message, type: 'user' };
+      setMessages([...messages, userMessage]);
+      setMessage('');
       setIsSending(true);
-      const userMessage = { role: 'user', content: inputMessage };
-      setChatMessages(prevMessages => [...prevMessages, userMessage]);
-      setInputMessage('');
 
+      // Send the message to the backend and get AI response
       try {
         const response = await axios.post('http://localhost:8000/chat/', {
-          message: inputMessage
+          message
         });
-        const botMessage = { role: 'bot', content: response.data.response };
-        setChatMessages(prevMessages => [...prevMessages, botMessage]);
+        // Add the AI response to the chat
+        const botMessage = { text: response.data.response, type: 'ai' };
+        setMessages(prevMessages => [...prevMessages, botMessage]);
       } catch (error) {
         console.error('Error sending message:', error);
-        const errorMessage = { role: 'bot', content: 'Sorry, I encountered an error. Please try again.' };
-        setChatMessages(prevMessages => [...prevMessages, errorMessage]);
+        const errorMessage = { text: 'Sorry, I encountered an error. Please try again.', type: 'ai' };
+        setMessages(prevMessages => [...prevMessages, errorMessage]);
       } finally {
         setIsSending(false);
       }
     }
   };
 
-  useEffect(() => {
-    const chatContainer = document.getElementById('chat-container');
-    if (chatContainer) {
-      chatContainer.scrollTop = chatContainer.scrollHeight;
+  // Function to regenerate AI response for a specific message
+  const regenerateResponse = async (index) => {
+    setIsSending(true);
+    try {
+      const response = await axios.post('http://localhost:8000/regenerate/', {
+        message: messages[index].text
+      });
+      setMessages(prevMessages => {
+        const newMessages = [...prevMessages];
+        newMessages[index] = { ...newMessages[index], text: response.data.response };
+        return newMessages;
+      });
+    } catch (error) {
+      console.error('Error regenerating message:', error);
+    } finally {
+      setIsSending(false);
     }
-  }, [chatMessages]);
+  };
+
+  const playAudio = (text) => {
+    const utterance = new SpeechSynthesisUtterance(text);
+    speechSynthesis.speak(utterance);
+  };
+
+  const toggleUserPanel = () => {
+    setShowUserPanel(prev => !prev);
+    setShowAnnouncements(false); // Close announcements when user panel opens
+  };
+
+  useEffect(() => {
+    const chatContainer = document.querySelector('.chat-area');
+    if (chatContainer) {
+      chatContainer.scrollTop = chatContainer.scrollHeight; // Scroll to the bottom on new messages
+    }
+  }, [messages]);
 
   return (
     <div className="chatbot-container">
-      {/* Left Sidebar */}
-      <div className={`left-sidebar ${isLeftSideOpen ? '' : 'collapsed'}`}>
-        {isLeftSideOpen && (
-          <>
-            <div className="user-info">
-              <div className="user-avatar">JD</div>
-              <div>
-                <div className="user-name">Jane Doe</div>
-                <div className="user-role">User</div>
-              </div>
-            </div>
-            <div className="new-chat-button">+ New Chat</div>
-            <div className="chat-history">Chat History</div>
-          </>
-        )}
-      </div>
+      <video ref={videoRef} id="background-video" loop autoPlay muted>
+        <source src={darkblue} type="video/mp4" />
+        Your browser does not support the video tag.
+      </video>
+      <div className="chatbot-window">
+        <div className="sidebar">
+          <button className="sidebar-button" onClick={toggleUserPanel}>
+            <UserCircle />
+          </button>
+          <button className="sidebar-button"><MessageSquare /></button>
+          <button className="sidebar-button"><PlusCircle /></button>
+          <button className="sidebar-button" onClick={() => setShowAnnouncements(!showAnnouncements)}>
+            <Bell />
+          </button>
+        </div>
 
-      {/* Main Chat Area */}
-      <div className="main-chat-area">
-        <div className="chat-header">
-          <h1>AI Chatbot</h1>
-          <div>
-            <button className="toggle-button" onClick={() => setIsLeftSideOpen(!isLeftSideOpen)}>
-              {isLeftSideOpen ? '◄' : '►'}
-            </button>
-            <button className="toggle-button" onClick={() => setIsRightSideOpen(!isRightSideOpen)}>
-              {isRightSideOpen ? '►' : '◄'}
+        {/* Main Content */}
+        <div className="main-content" style={{ marginRight: (showAnnouncements || showUserPanel) ? '320px' : '0' }}>
+          <div className="chat-area">
+            {messages.map((msg, index) => (
+              <div key={index} className={`message-container ${msg.type === 'user' ? 'user-message-container' : 'ai-message-container'}`}>
+                <div className={`message ${msg.type === 'user' ? 'user-message' : 'ai-message'}`}>
+                  {msg.text}
+                </div>
+                {msg.type === 'ai' && (
+                  <div className="message-actions" style={{ marginTop: '10px' }}>
+                    <button className="action-button" onClick={() => regenerateResponse(index)} disabled={isSending}>
+                      <RefreshCw size={16} />
+                    </button>
+                    <button className="action-button" onClick={() => playAudio(msg.text)}>
+                      <Volume2 size={16} />
+                    </button>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+          <div className="input-area">
+            <input
+              type="text"
+              placeholder="Type a message..."
+              value={message}
+              onChange={(e) => setMessage(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && sendMessage()}
+              disabled={isSending}
+            />
+            <button className="send-button" onClick={sendMessage} disabled={isSending}>
+              {isSending ? 'Sending...' : <Send size={20} />}
             </button>
           </div>
         </div>
 
-        <div id="chat-container" className="chat-container">
-          {chatMessages.map((message, index) => (
-            <div
-              key={index}
-              className={`chat-message ${message.role === 'user' ? 'chat-message-user' : 'chat-message-bot'}`}
-            >
-              {message.content}
-              {message.role === 'bot' && (
-                <div className="message-options">
-                  <button className="option-button">Regenerate</button>
-                  <button className="option-button">Audio</button>
-                  <button className="option-button">Read Text</button>
-                </div>
-              )}
+        {/* Announcements Panel */}
+        {showAnnouncements && (
+          <div className="announcements-panel">
+            <div className="announcements-header">
+              <h2>Announcements</h2>
+              <button onClick={() => setShowAnnouncements(false)}><X size={20} /></button>
             </div>
-          ))}
-        </div>
+            <div className="announcements-list">
+              {announcements.map((announcement, index) => (
+                <div key={index} className="announcement">{announcement}</div>
+              ))}
+            </div>
+          </div>
+        )}
 
-        <div className="input-box">
-          <input
-            type="text"
-            placeholder="Type your message..."
-            value={inputMessage}
-            onChange={(e) => setInputMessage(e.target.value)}
-            onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
-            disabled={isSending}
-          />
-          <button onClick={handleSendMessage} disabled={isSending}>
-            {isSending ? 'Sending...' : 'Send'}
-          </button>
-        </div>
-      </div>
-
-      {/* Right Sidebar */}
-      <div className={`right-sidebar ${isRightSideOpen ? '' : 'collapsed'}`}>
-        {isRightSideOpen && (
-          <div className="announcements">
-            <div className="announcement">Latest Announcement</div>
-            <div className="announcement-content">This is your latest announcement!</div>
+        {/* User Info Panel */}
+        {showUserPanel && (
+          <div className="user-panel">
+            <div className="profile-header">
+              <div className="profile-avatar">
+                <img src="avatar.png" alt="User Avatar" />
+              </div>
+              <div className="profile-name">John Doe</div>
+              <div className="profile-email">john.doe@example.com</div>
+            </div>
+            <div className="profile-actions">
+              <button className="logout-button" onClick={() => alert('Logged out!')}>Log Out</button>
+              <button className="close-button" onClick={toggleUserPanel}><X size={20} /></button>
+            </div>
           </div>
         )}
       </div>
@@ -120,4 +173,4 @@ const Chat = () => {
   );
 };
 
-export default Chat;
+export default ChatbotUI;
