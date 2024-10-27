@@ -1,24 +1,62 @@
-import fitz  # PyMuPDF
-import pytesseract
-from PIL import Image
-import io
-import os
-import pandas as pd
-from docx import Document as WordDocument
-from openpyxl import load_workbook
-from langchain_community.embeddings import OllamaEmbeddings
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_community.vectorstores import Chroma
-from langchain.chains import ConversationalRetrievalChain
-from langchain_community.chat_message_histories import ChatMessageHistory
-from langchain.memory import ConversationBufferMemory
-from langchain_groq import ChatGroq
-from dotenv import load_dotenv
-from fastapi import FastAPI, UploadFile, File, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-import uvicorn
-from pydantic import BaseModel
-import logging
+# Required libraries for handling PDFs, images, and OCR
+import fitz  # PyMuPDF for working with PDF files
+import pytesseract  # OCR tool for extracting text from images
+from PIL import Image  # Image processing library
+import io  # For handling byte streams
+import os  # For operating system dependent functionality
+
+# Libraries for data manipulation and file handling
+import pandas as pd  # Data analysis and manipulation library
+from docx import Document as WordDocument  # For handling Word documents
+from openpyxl import load_workbook  # For reading and writing Excel files
+from datetime import datetime, timedelta
+import mimetypes
+
+# LangChain specific libraries for embedding, text splitting, and vector storage
+from langchain_community.embeddings import OllamaEmbeddings  # For embeddings
+from langchain.text_splitter import RecursiveCharacterTextSplitter  # For splitting text
+from langchain_community.vectorstores import Chroma  # For vector storage
+from langchain.chains import ConversationalRetrievalChain  # For conversational chains
+from langchain_community.chat_message_histories import ChatMessageHistory  # For message history management
+from langchain.memory import ConversationBufferMemory  # For conversation memory
+
+# For working with Groq API in LangChain
+from langchain_groq import ChatGroq  # For integrating with Groq services
+
+# Environment variable management
+from dotenv import load_dotenv  # For loading environment variables from .env file
+
+# FastAPI for building the API
+from fastapi import FastAPI, UploadFile, File, HTTPException, Form  # For creating the FastAPI app and handling file uploads
+from fastapi.middleware.cors import CORSMiddleware  # type: ignore # For handling CORS
+
+# Uvicorn for serving the FastAPI app
+import uvicorn  # ASGI server for running FastAPI applications
+
+# Pydantic for data validation and settings management
+from pydantic import BaseModel  # For defining data models
+
+# Logging for application logging
+import logging  # For logging messages and errors
+
+# Firebase imports
+import firebase_admin
+from firebase_admin import credentials, storage, firestore
+import datetime
+from firebase_admin import storage
+
+from tenacity import retry, stop_after_attempt, wait_exponential
+from fuzzywuzzy import process
+
+# Initialize Firebase
+cred = credentials.Certificate(r"C:\Users\Ammar Abdulhussain\Desktop\phullstack\src\assets\test-d1e87-firebase-adminsdk-frpau-c8d7562b8b.json")
+firebase_admin.initialize_app(cred, {
+    'storageBucket': 'test-d1e87.appspot.com'
+})
+
+# Get a reference to the storage service and Firestore
+bucket = storage.bucket()
+db = firestore.client()
 
 # Loading environment variables from .env file
 load_dotenv()
@@ -30,17 +68,18 @@ logging.basicConfig(level=logging.INFO)
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allows all origins
+    allow_origins=["*"],
     allow_credentials=True,
-    allow_methods=["*"],  # Allows all methods
-    allow_headers=["*"],  # Allows all headers
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # Initialize conversation chain with GROQ language model
 groq_api_key = os.environ['GROQ_API_KEY']
 
 llm_groq = ChatGroq(
-    groq_api_key=groq_api_key, model_name="llama-3.1-70b-versatile",
+    groq_api_key=groq_api_key,
+    model_name="llama-3.1-70b-versatile",
     temperature=0.2
 )
 
@@ -55,14 +94,44 @@ def extract_text_from_image(image_bytes):
     ocr_text = pytesseract.image_to_string(image)
     return ocr_text
 
-def process_files(files):
+def normalize_role(role):
+    """Normalize role names to lowercase singular form."""
+    role = role.lower()
+    if role.endswith('s'):
+        role = role[:-1]  # Remove trailing 's'
+    return role
+
+def upload_to_firebase(file_content, filename, role):
+    """
+    Upload a file to Firebase Storage with metadata and correct MIME type.
+    """
+    blob = bucket.blob(filename)
+    
+    # Detect MIME type
+    content_type, _ = mimetypes.guess_type(filename)
+    if content_type is None:
+        content_type = 'application/octet-stream'  # Default to binary if type can't be guessed
+    
+    blob.upload_from_string(file_content, content_type=content_type)
+    
+    # Normalize and set custom metadata
+    normalized_role = normalize_role(role)
+    metadata = {'role': normalized_role}
+    blob.metadata = metadata
+    blob.patch()
+
+    # Verify that metadata was set correctly
+    updated_blob = bucket.get_blob(filename)
+    if updated_blob.metadata != metadata:
+        logging.error(f"Failed to set metadata for {filename}. Expected {metadata}, got {updated_blob.metadata}")
+    else:
+        logging.info(f"File uploaded to Firebase with metadata: {filename}, role: {normalized_role}, content_type: {content_type}")
+
+    return blob.public_url
+
+def process_files(files, role):
     texts = []
     metadatas = []
-    images_save_path = 'imgg/'  # Path to save images
-
-    # Ensure the images directory exists
-    if not os.path.exists(images_save_path):
-        os.makedirs(images_save_path)
 
     for file in files:
         file_content = file.file.read()
@@ -70,6 +139,10 @@ def process_files(files):
         logging.info(f"Processing file: {file.filename} with extension: {file_ext}")
 
         try:
+            # Upload file to Firebase Storage with role metadata
+            file_url = upload_to_firebase(file_content, file.filename, role)
+            logging.info(f"File uploaded to Firebase: {file_url}")
+
             if file_ext in ['.pdf']:
                 # Process PDF files
                 pdf = fitz.open(stream=file_content, filetype="pdf")
@@ -85,7 +158,7 @@ def process_files(files):
                         base_image = pdf.extract_image(xref)
                         image_bytes = base_image["image"]
 
-                        # Direct OCR extraction without saving the image
+                        # OCR extraction
                         ocr_text = extract_text_from_image(image_bytes)
                         if ocr_text.strip():
                             texts.append(ocr_text)
@@ -135,7 +208,7 @@ def process_files(files):
 
     # Populate metadata for each chunk
     if file_texts:
-        metadatas = [{"source": f"{i}-{file.filename}"} for i in range(len(file_texts))]
+        metadatas = [{"source": f"{i}-{file.filename}", "role": role} for i in range(len(file_texts))]
 
     if len(file_texts) == 0:
         raise ValueError("No texts extracted from the provided files.")
@@ -166,14 +239,39 @@ def process_files(files):
 
     return chain
 
+def can_access_document(user_role, document_role):
+    """
+    Check if a user with given role can access a document with specified role.
+    Implements role hierarchy: HOD/Dean > Teacher > Student
+    """
+    # Normalize roles to lowercase
+    user_role = user_role.lower().replace('/', '_').replace(' ', '_')
+    document_role = document_role.lower().replace('/', '_').replace(' ', '_')
+    
+    # Define role hierarchy
+    role_hierarchy = {
+        'hod_dean': ['hod_dean', 'teacher', 'student'],
+        'teacher': ['teacher', 'student'],
+        'student': ['student']
+    }
+    
+    # Check if user's role exists in hierarchy
+    if user_role not in role_hierarchy:
+        logging.error(f"Invalid user role: {user_role}")
+        return False
+    
+    # Check if document role is accessible to user
+    return document_role in role_hierarchy[user_role]
+
 @app.post("/upload/")
-async def upload_file(files: list[UploadFile] = File(...)):
+async def upload_file(files: list[UploadFile] = File(...), role: str = Form(...)):
     global global_chain
     try:
-        logging.info(f"Received {len(files)} files for processing.")
-        global_chain = process_files(files)
+        normalized_role = normalize_role(role)
+        logging.info(f"Received {len(files)} files for processing with normalized role: {normalized_role}")
+        global_chain = process_files(files, normalized_role)
         logging.info("Files processed successfully.")
-        return {"message": f"Successfully processed {len(files)} files."}
+        return {"message": f"Successfully processed {len(files)} files for role: {normalized_role}"}
     except Exception as e:
         logging.error(f"Error processing files: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -181,6 +279,62 @@ async def upload_file(files: list[UploadFile] = File(...)):
 class ChatRequest(BaseModel):
     message: str
 
+@app.post("/retrieve-document/")
+async def retrieve_document(request: dict):
+    file_name = request.get("fileName")
+    user_role = normalize_role(request.get("userRole", ""))
+
+    logging.info(f"Document retrieval request - File: {file_name}, User Role: {user_role}")
+
+    if not file_name or not user_role:
+        logging.error("Missing fileName or userRole in request")
+        raise HTTPException(status_code=400, detail="Missing fileName or userRole")
+
+    try:
+        # Get list of all blobs in the bucket
+        blobs = list(bucket.list_blobs())
+        blob_names = [blob.name for blob in blobs]
+
+        # Find the best matching file
+        best_match, score = process.extractOne(file_name, blob_names)
+        if score < 80:
+            logging.error(f"No close match found for: {file_name}")
+            raise HTTPException(status_code=404, detail=f"Document not found: {file_name}")
+
+        blob = bucket.blob(best_match)
+        
+        # Get document metadata
+        blob.reload()  # Ensure we have the latest metadata
+        document_role = blob.metadata.get('role', 'student') if blob.metadata else 'student'
+        
+        logging.info(f"Document metadata - File Role: {document_role}")
+        
+        # Check access permission
+        if not can_access_document(user_role, document_role):
+            logging.warning(f"Access denied - User Role: {user_role}, Document Role: {document_role}")
+            return {
+                "canAccess": False,
+                "message": "You don't have permission to access this document."
+            }
+
+        # Generate signed URL for authorized access
+        signed_url = blob.generate_signed_url(
+            version="v4",
+            expiration=datetime.timedelta(minutes=15),
+            method="GET"
+        )
+        
+        logging.info(f"Access granted - Generated signed URL for {best_match}")
+        return {
+            "canAccess": True,
+            "downloadUrl": signed_url,
+            "fileName": best_match
+        }
+
+    except Exception as e:
+        logging.exception(f"Error in retrieve_document: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+    
 @app.post("/chat/")
 async def chat(request: ChatRequest):
     global global_chain
@@ -195,8 +349,7 @@ async def chat(request: ChatRequest):
     "Answer to the question in a clear and concise manner. "
     "Also respond to general greetings and notes in a friendly, conversational tone. "
     "Respond to thanking and similar statements with welcoming notes. "
-)
-
+    )
 
     context = f"{prompt}\nUser: {request.message}\nBot:"
 
