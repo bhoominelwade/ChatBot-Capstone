@@ -52,9 +52,9 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 from fuzzywuzzy import process
 
 # Initialize Firebase
-cred = credentials.Certificate(r"C:\Users\Ammar Abdulhussain\Desktop\phullstack\src\assets\finalprj-ac971-firebase-adminsdk-m7vjk-749c7058b2.json")
+cred = credentials.Certificate(r"Tera")
 firebase_admin.initialize_app(cred, {
-    'storageBucket': 'finalprj-ac971.appspot.com'
+    'storageBucket': 'capstone-4eff9.appspot.com'
 })
 
 # Get a reference to the storage service and Firestore
@@ -414,66 +414,19 @@ async def get_announcements(role: str):
             announcement_role = data.get('role', '').lower()
             if announcement_role.endswith('s'):
                 announcement_role = announcement_role[:-1]
+            # Only add announcements if the role is in the access list
             if announcement_role in role_access[role]:
                 # Convert timestamp to string for JSON serialization
                 if data.get('timestamp'):
-                    data['timestamp'] = data['timestamp'].strftime('%Y-%m-%d %H:%M:%S')
-                announcements.append(data)
+                    utc_time = data['timestamp']
+                    ist_time = utc_time + datetime.timedelta(hours=5, minutes=30)  # Convert to IST
+                    data['timestamp'] = ist_time.strftime('%Y-%m-%d %I:%M %p')
+                announcements.append(data)  # Add the announcement to the list
             
         return {"announcements": announcements}
     except Exception as e:
         logging.error(f"Error fetching announcements: {e}")
         raise HTTPException(status_code=500, detail=f"Error fetching announcements: {str(e)}")
-
-@app.post("/announcement/")
-async def create_announcement(announcement: dict):
-    """
-    Create a new announcement with role-based access control and importance flag.
-    """
-    try:
-        db = firestore.client()
-        
-        # Normalize role
-        role = announcement["role"].lower()
-        if role == "students":
-            role = "student"
-        elif role == "teachers":
-            role = "teacher"
-        elif role in ["hod/dean", "hod_dean", "hod/deans"]:
-            role = "hod_dean"
-        
-        # Prepare announcement data
-        announcement_data = {
-            "text": announcement["text"],
-            "role": role,
-            "timestamp": firestore.SERVER_TIMESTAMP,
-            "isImportant": announcement.get("isImportant", False)
-        }
-        
-        # Add the announcement to Firestore
-        announcement_ref = db.collection('announcements').document()
-        announcement_ref.set(announcement_data)
-        
-        # If it's important, create a notification
-        if announcement_data["isImportant"]:
-            notification_data = {
-                "type": "important_announcement",
-                "announcementId": announcement_ref.id,
-                "text": announcement["text"][:100] + "..." if len(announcement["text"]) > 100 else announcement["text"],
-                "timestamp": firestore.SERVER_TIMESTAMP,
-                "role": role,
-                "read": False
-            }
-            db.collection('notifications').add(notification_data)
-        
-        return {
-            "id": announcement_ref.id,
-            "message": "Announcement created successfully",
-            "status": "success"
-        }
-    except Exception as e:
-        logging.error(f"Error creating announcement: {e}")
-        raise HTTPException(status_code=500, detail=f"Error creating announcement: {str(e)}")
 
 @app.delete("/announcement/{announcement_id}")
 async def delete_announcement(announcement_id: str):

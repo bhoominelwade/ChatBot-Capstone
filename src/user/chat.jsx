@@ -67,6 +67,8 @@ const ChatbotUI = () => {
     fetchUserProfile();
   }, [navigate]);
 
+  
+
   useEffect(() => {
     if (showAnnouncements && userProfile.role) {
       fetchAnnouncements();
@@ -76,21 +78,39 @@ const ChatbotUI = () => {
   const fetchAnnouncements = async () => {
     setLoadingAnnouncements(true);
     try {
+      // Make sure to normalize the role as the backend expects
       const normalizedRole = userProfile.role.toLowerCase().replace('/', '_').replace(' ', '_');
       const response = await axios.get(`http://localhost:8000/announcements/${normalizedRole}`);
-      setAnnouncements(response.data.announcements);
+      
+      if (response.data && response.data.announcements) {
+        setAnnouncements(response.data.announcements);
+      } else {
+        setAnnouncements([]);
+      }
     } catch (error) {
       console.error('Error fetching announcements:', error);
+      setAnnouncements([]);
     } finally {
       setLoadingAnnouncements(false);
     }
   };
 
-  useEffect(() => {
-    if (chatContainerRef.current) {
-      chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
+  const handlePanelClick = (panel) => {
+    if (panel === 'user') {
+      setShowUserPanel(true);
+      setShowAnnouncements(false);
+    } else if (panel === 'announcements') {
+      setShowAnnouncements(true);
+      setShowUserPanel(false);
     }
-  }, [messages]);
+  };
+  
+  // Add this useEffect to fetch announcements when component mounts and when userProfile changes
+  useEffect(() => {
+    if (userProfile.role) {
+      fetchAnnouncements();
+    }
+  }, [userProfile.role]);
 
   useEffect(() => {
     if (announcementsRef.current && loadingAnnouncements === false) {
@@ -194,7 +214,7 @@ const ChatbotUI = () => {
               {msg.text.slice(4)}
             </>
           ) : (
-            msg.text
+            <pre className="message-content">{msg.text}</pre>
           )}
           {msg.downloadUrl && (
             <a href={msg.downloadUrl} target="_blank" rel="noopener noreferrer" className="download-link">
@@ -237,15 +257,29 @@ const ChatbotUI = () => {
           </div>
         ) : (
           announcements.map((announcement) => (
-            <div key={announcement.id} className="announcement-item">
+            <div 
+              key={announcement.id} 
+              className={`announcement-item ${announcement.isImportant ? 'important' : ''}`}
+            >
               <div className="announcement-header">
                 <span className={`role-badge ${announcement.role}`}>
                   {announcement.role.replace('_', '/')}
                 </span>
                 <span className="timestamp">
-                  {new Date(announcement.timestamp).toLocaleString()}
+                  {new Date(announcement.timestamp).toLocaleString('en-IN', {
+                    timeZone: 'Asia/Kolkata',
+                    year: 'numeric',
+                    month: 'numeric',
+                    day: 'numeric',
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    hour12: true
+                  })}
                 </span>
               </div>
+              {announcement.isImportant && (
+                <div className="important-badge">Important</div>
+              )}
               <p className="announcement-text">{announcement.text}</p>
             </div>
           ))
@@ -265,7 +299,7 @@ const ChatbotUI = () => {
         <div className="sidebar">
           <button 
             className={`sidebar-button ${showUserPanel ? 'active' : ''}`}
-            onClick={() => setShowUserPanel(!showUserPanel)}
+            onClick={() => handlePanelClick('user')}
           >
             <UserCircle />
           </button>
@@ -277,7 +311,7 @@ const ChatbotUI = () => {
           </button>
           <button 
             className={`sidebar-button ${showAnnouncements ? 'active' : ''}`}
-            onClick={() => setShowAnnouncements(!showAnnouncements)}
+            onClick={() => handlePanelClick('announcements')}
           >
             <Bell />
           </button>

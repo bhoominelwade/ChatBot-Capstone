@@ -551,25 +551,27 @@ td {
 /* Announcement Controls */
 .announcement-controls {
     display: flex;
-    justify-content: space-between;
-    align-items: center;
+    flex-direction: column;  /* Changed from row to column */
+    gap: 20px;  /* Added gap between toggle and button */
     margin-top: 20px;
-}
-
-.importance-toggle {
+  }
+  
+  .importance-toggle {
     display: flex;
     align-items: center;
-}
-
-.toggle-label {
+    justify-content: flex-start;  /* Align to left */
+    width: 100%;
+  }
+  
+  .toggle-label {
     display: flex;
     align-items: center;
     gap: 12px;
     color: #7dd3fc;
     font-size: 0.9rem;
     cursor: pointer;
-}
-
+    user-select: none;  /* Prevent text selection */
+  }
 .toggle-slider {
     position: relative;
     display: inline-block;
