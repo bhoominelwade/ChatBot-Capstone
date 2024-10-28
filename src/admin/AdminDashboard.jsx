@@ -1,4 +1,4 @@
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import axios from "axios";
 import { useNavigate } from 'react-router-dom';
 import {
@@ -12,7 +12,10 @@ import {
   File,
   FileType,
   Image,
-  LogOut
+  LogOut,
+  Trash2,
+  AlertCircle,
+  RefreshCw
 } from "lucide-react";
 import "./AdminDashboard.css";
 
@@ -20,11 +23,15 @@ export default function AdminDashboard() {
   const [activeTab, setActiveTab] = useState("Upload");
   const [announcement, setAnnouncement] = useState("");
   const [files, setFiles] = useState([]);
+  const [announcements, setAnnouncements] = useState([]);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState(null);
-  const [selectedRole, setSelectedRole] = useState("Students");
+  const [selectedRole, setSelectedRole] = useState("student");
+  const [loadingAnnouncements, setLoadingAnnouncements] = useState(false);
+  const [isImportant, setIsImportant] = useState(false);
   const fileInputRef = useRef(null);
   const navigate = useNavigate();
+  
 
   const tabs = [
     { name: "Upload", icon: Upload },
@@ -33,70 +40,92 @@ export default function AdminDashboard() {
     { name: "Chatbot", icon: MessageSquare },
   ];
 
-  const resetState = () => {
-    setActiveTab("Upload");
-    setAnnouncement("");
-    setFiles([]);
-    setUploading(false);
+  useEffect(() => {
+    if (activeTab === "Announcements") {
+      fetchAnnouncements();
+    }
+  }, [activeTab, selectedRole]);
+
+  const fetchAnnouncements = async () => {
+    setLoadingAnnouncements(true);
     setUploadError(null);
-    setSelectedRole("Students");
+    try {
+      const response = await axios.get(`http://localhost:8000/announcements/${selectedRole}`);
+      
+      if (response.data && response.data.announcements) {
+        setAnnouncements(response.data.announcements);
+      } else {
+        setAnnouncements([]);
+      }
+    } catch (error) {
+      console.error("Error fetching announcements:", error);
+      setUploadError(
+        error.response?.data?.detail || 
+        "Failed to fetch announcements. Please try again."
+      );
+      setAnnouncements([]);
+    } finally {
+      setLoadingAnnouncements(false);
+    }
   };
 
   const handleLogout = () => {
     localStorage.clear();
     navigate('/login');
-
-    // Add a delay before refreshing the page to prevent immediate visual feedback
     setTimeout(() => {
-        window.location.reload();
-    }, 100); // 100 milliseconds delay
-};
+      window.location.reload();
+    }, 100);
+  };
 
+  const handleRoleChange = (e) => {
+    setSelectedRole(e.target.value);
+    if (activeTab === "Announcements") {
+      fetchAnnouncements();
+    }
+  };
 
-const handleFileUpload = async (e) => {
-  const selectedFiles = Array.from(e.target.files);
-  setUploading(true);
-  setUploadError(null);
-  
-  const formData = new FormData();
-  selectedFiles.forEach((file) => {
-    formData.append("files", file);
-  });
-  
-  // Ensure role is properly formatted for metadata
-  const normalizedRole = selectedRole.toLowerCase().replace('/', '_').replace(' ', '_');
-  formData.append("role", normalizedRole);
-  formData.append('isAnnouncement', 'false');
+  const handleFileUpload = async (e) => {
+    const selectedFiles = Array.from(e.target.files);
+    setUploading(true);
+    setUploadError(null);
+    
+    const formData = new FormData();
+    selectedFiles.forEach((file) => {
+      formData.append("files", file);
+    });
+    
+    formData.append("role", selectedRole);
+    formData.append('isAnnouncement', 'false');
 
-  try {
-    const response = await axios.post(
-      "http://localhost:8000/upload/",
-      formData,
-      {
-        headers: {
-          "Content-Type": "multipart/form-data",
-        },
-      }
-    );
+    try {
+      const response = await axios.post(
+        "http://localhost:8000/upload/",
+        formData,
+        {
+          headers: {
+            "Content-Type": "multipart/form-data",
+          },
+        }
+      );
 
-    const newFiles = selectedFiles.map((file) => ({
-      name: file.name,
-      size: (file.size / 1024 / 1024).toFixed(2) + " MB",
-      uploaded: new Date().toLocaleDateString(),
-      icon: getFileIcon(file.name),
-      role: selectedRole,
-      isAnnouncement: false,
-    }));
+      const newFiles = selectedFiles.map((file) => ({
+        name: file.name,
+        size: (file.size / 1024 / 1024).toFixed(2) + " MB",
+        uploaded: new Date().toLocaleDateString(),
+        icon: getFileIcon(file.name),
+        role: selectedRole,
+        isAnnouncement: false,
+      }));
 
-    setFiles((prevFiles) => [...newFiles, ...prevFiles]);
-    console.log("Files uploaded successfully:", response.data);
-  } catch (error) {
-    console.error("Error uploading file:", error);
-    setUploadError("Failed to upload files. Please try again.");
-  } finally {
-    setUploading(false);
-  }
-};
+      setFiles((prevFiles) => [...newFiles, ...prevFiles]);
+      console.log("Files uploaded successfully:", response.data);
+    } catch (error) {
+      console.error("Error uploading file:", error);
+      setUploadError("Failed to upload files. Please try again.");
+    } finally {
+      setUploading(false);
+    }
+  };
 
   const handleAnnouncementSubmit = async (e) => {
     e.preventDefault();
@@ -109,70 +138,110 @@ const handleFileUpload = async (e) => {
     setUploadError(null);
 
     try {
-      const formData = new FormData();
-      
-      // Add announcement text as a file
-      const announcementBlob = new Blob([announcement], { type: 'text/plain' });
-      const textFile = new File([announcementBlob], 'announcement.txt', { type: 'text/plain' });
-      formData.append('files', textFile);
-      formData.append('role', selectedRole.toLowerCase());
-      formData.append('isAnnouncement', 'true');
-
       const response = await axios.post(
-        "http://localhost:8000/upload/",
-        formData,
+        "http://localhost:8000/announcement/",
         {
-          headers: {
-            "Content-Type": "multipart/form-data",
-          },
+          text: announcement,
+          role: selectedRole,
+          isImportant: isImportant
         }
       );
 
-      const newFile = {
-        name: 'announcement.txt',
-        size: (announcement.length / 1024).toFixed(2) + " KB",
-        uploaded: new Date().toLocaleDateString(),
-        icon: FileText,
-        role: selectedRole,
-        isAnnouncement: true,
-        content: announcement,
-      };
-
-      setFiles(prevFiles => [newFile, ...prevFiles]);
-      setAnnouncement("");
-      console.log("Announcement submitted successfully:", response.data);
-
+      if (response.data && response.data.status === "success") {
+        setAnnouncement("");
+        setIsImportant(false); // Reset importance after successful submission
+        // Wait a moment before fetching to allow Firebase to update
+        setTimeout(() => {
+          fetchAnnouncements();
+        }, 1000);
+      } else {
+        throw new Error("Failed to create announcement");
+      }
     } catch (error) {
-      console.error("Error uploading announcement:", error);
-      setUploadError("Failed to upload announcement. Please try again.");
+      console.error("Error posting announcement:", error);
+      setUploadError(
+        error.response?.data?.detail || 
+        "Failed to post announcement. Please try again."
+      );
     } finally {
       setUploading(false);
     }
   };
 
-  const triggerFileUpload = () => {
-    fileInputRef.current.click();
+  const deleteAnnouncement = async (id) => {
+    try {
+      await axios.delete(`http://localhost:8000/announcement/${id}`);
+      fetchAnnouncements();
+    } catch (error) {
+      console.error("Error deleting announcement:", error);
+      setUploadError("Failed to delete announcement. Please try again.");
+    }
   };
 
   const getFileIcon = (fileName) => {
     const ext = fileName.split('.').pop().toLowerCase();
     switch (ext) {
-      case 'pdf':
-        return FileText;
+      case 'pdf': return FileText;
       case 'csv':
-      case 'xlsx':
-        return FileSpreadsheet;
-      case 'txt':
-        return FileText;
-      case 'docx':
-        return FileType;
+      case 'xlsx': return FileSpreadsheet;
+      case 'txt': return FileText;
+      case 'docx': return FileType;
       case 'jpeg':
       case 'jpg':
-      case 'png':
-        return Image;
-      default:
-        return File;
+      case 'png': return Image;
+      default: return File;
     }
+  };
+
+  const renderAnnouncementsContent = () => {
+    if (loadingAnnouncements) {
+      return (
+        <div className="loading-state">
+          <RefreshCw className="spin" />
+          <p>Loading announcements...</p>
+        </div>
+      );
+    }
+
+    if (announcements.length === 0) {
+      return (
+        <div className="empty-state">
+          <Bell size={24} />
+          <p>No announcements yet</p>
+        </div>
+      );
+    }
+
+    return (
+      <>
+        {announcements.map((announcement) => (
+          <div 
+            key={announcement.id} 
+            className={`announcement-item ${announcement.isImportant ? 'important' : ''}`}
+          >
+            <div className="announcement-header">
+              <span className={`role-badge ${announcement.role}`}>
+                {announcement.role.replace('_', '/')}
+              </span>
+              <span className="timestamp">
+                {new Date(announcement.timestamp).toLocaleString()}
+              </span>
+            </div>
+            {announcement.isImportant && (
+              <span className="important-badge">Important</span>
+            )}
+            <p className="announcement-text">{announcement.text}</p>
+            <button 
+              className="delete-button"
+              onClick={() => deleteAnnouncement(announcement.id)}
+              title="Delete announcement"
+            >
+              <Trash2 size={16} />
+            </button>
+          </div>
+        ))}
+      </>
+    );
   };
 
   return (
@@ -201,18 +270,20 @@ const handleFileUpload = async (e) => {
           </button>
         </div>
       </nav>
+
       <main className="main-layout">
         {(activeTab === "Upload" || activeTab === "Announcements") && (
-          <div className="dropdown-container">
+          <div className="role-selector-container">
+            <label htmlFor="userType" className="role-label">Select Role:</label>
             <select
               id="userType"
               value={selectedRole}
-              onChange={(e) => setSelectedRole(e.target.value)}
-              className="user-type-dropdown"
+              onChange={handleRoleChange}
+              className="role-dropdown"
             >
-              <option value="Students">Students</option>
-              <option value="Teachers">Teachers</option>
-              <option value="HOD/Dean">HOD/Dean</option>
+              <option value="student">Students</option>
+              <option value="teacher">Teachers</option>
+              <option value="hod_dean">HOD/Dean</option>
             </select>
           </div>
         )}
@@ -225,8 +296,14 @@ const handleFileUpload = async (e) => {
                 <div className="upload-area">
                   <p>Initiate data transfer or select files for upload.</p>
                   <p className="file-types">Supported file types: PDF, CSV, TXT, DOCX, XLSX, JPEG, JPG, PNG</p>
-                  <button onClick={triggerFileUpload} disabled={uploading}>
-                    {uploading ? "Uploading..." : "Upload Files"}
+                  <button onClick={() => fileInputRef.current.click()} disabled={uploading}>
+                    {uploading ? (
+                      <>
+                        <RefreshCw className="spin" /> Uploading...
+                      </>
+                    ) : (
+                      "Upload Files"
+                    )}
                   </button>
                   <input
                     type="file"
@@ -238,10 +315,15 @@ const handleFileUpload = async (e) => {
                   />
                 </div>
                 {uploadError && (
-                  <p className="error-message">{uploadError}</p>
+                  <div className="error-message">
+                    <AlertCircle size={16} />
+                    <span>{uploadError}</span>
+                  </div>
                 )}
               </div>
-              <div className="card">
+
+              <div className="card files-list">
+                <h3>Uploaded Files</h3>
                 <table>
                   <thead>
                     <tr>
@@ -290,17 +372,47 @@ const handleFileUpload = async (e) => {
                     placeholder="Type your announcement here..."
                     className="announcement-textarea"
                   />
-                  <button 
-                    type="submit" 
-                    className="submit-announcement-button"
-                    disabled={uploading}
-                  >
-                    {uploading ? "Submitting..." : "Submit Announcement"}
-                  </button>
+                  <div className="announcement-controls">
+                    <div className="importance-toggle">
+                      <label className="toggle-label">
+                        Mark as Important
+                        <div className="toggle-slider">
+                          <input
+                            type="checkbox"
+                            checked={isImportant}
+                            onChange={(e) => setIsImportant(e.target.checked)}
+                          />
+                          <span className="slider"></span>
+                        </div>
+                      </label>
+                    </div>
+                    <button 
+                      type="submit" 
+                      className="submit-announcement-button"
+                      disabled={uploading}
+                    >
+                      {uploading ? (
+                        <>
+                          <RefreshCw className="spin" />
+                          Submitting...
+                        </>
+                      ) : (
+                        "Submit Announcement"
+                      )}
+                    </button>
+                  </div>
                   {uploadError && (
-                    <p className="error-message">{uploadError}</p>
+                    <div className="error-message">
+                      <AlertCircle size={16} />
+                      <span>{uploadError}</span>
+                    </div>
                   )}
                 </form>
+              </div>
+
+              <div className="card announcements-list">
+                <h3>Recent Announcements</h3>
+                {renderAnnouncementsContent()}
               </div>
             </div>
           )}

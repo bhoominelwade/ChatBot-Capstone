@@ -1,8 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import axios from 'axios';
-import { auth, db, storage } from '../firebase';
+import { auth, db } from '../firebase';
 import { doc, getDoc } from 'firebase/firestore';
-import { ref, getDownloadURL } from 'firebase/storage';
 import {
   UserCircle,
   MessageSquare,
@@ -13,6 +12,8 @@ import {
   RefreshCw,
   Volume2,
   Download,
+  AlertCircle,
+  LogOut
 } from 'lucide-react';
 import './chat.css';
 import darkblue from "../assets/darkblue.mp4";
@@ -27,6 +28,8 @@ const ChatbotUI = () => {
   const [showAnnouncements, setShowAnnouncements] = useState(false);
   const [showUserPanel, setShowUserPanel] = useState(false);
   const [isSending, setIsSending] = useState(false);
+  const [announcements, setAnnouncements] = useState([]);
+  const [loadingAnnouncements, setLoadingAnnouncements] = useState(false);
   const [userProfile, setUserProfile] = useState({
     name: '',
     email: '',
@@ -36,10 +39,7 @@ const ChatbotUI = () => {
 
   const videoRef = useRef(null);
   const chatContainerRef = useRef(null);
-
-  
-
-
+  const announcementsRef = useRef(null);
 
   useEffect(() => {
     const fetchUserProfile = async () => {
@@ -68,10 +68,44 @@ const ChatbotUI = () => {
   }, [navigate]);
 
   useEffect(() => {
+    if (showAnnouncements && userProfile.role) {
+      fetchAnnouncements();
+    }
+  }, [showAnnouncements, userProfile.role]);
+
+  const fetchAnnouncements = async () => {
+    setLoadingAnnouncements(true);
+    try {
+      const normalizedRole = userProfile.role.toLowerCase().replace('/', '_').replace(' ', '_');
+      const response = await axios.get(`http://localhost:8000/announcements/${normalizedRole}`);
+      setAnnouncements(response.data.announcements);
+    } catch (error) {
+      console.error('Error fetching announcements:', error);
+    } finally {
+      setLoadingAnnouncements(false);
+    }
+  };
+
+  useEffect(() => {
     if (chatContainerRef.current) {
       chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
     }
   }, [messages]);
+
+  useEffect(() => {
+    if (announcementsRef.current && loadingAnnouncements === false) {
+      announcementsRef.current.scrollTop = 0;
+    }
+  }, [announcements, loadingAnnouncements]);
+
+  const handleLogout = async () => {
+    try {
+      await auth.signOut();
+      navigate('/login');
+    } catch (error) {
+      console.error('Error logging out:', error);
+    }
+  };
 
   const sendMessage = async () => {
     if (message.trim() && !isSending) {
@@ -97,7 +131,7 @@ const ChatbotUI = () => {
             setMessages(prevMessages => [...prevMessages, botMessage]);
           } else {
             const botMessage = { 
-              text: `Access Denied: You don't have permission to access this document. This document requires a higher role level.`, 
+              text: 'Access Denied: You don\'t have permission to access this document.',
               type: 'ai',
               isError: true
             };
@@ -114,7 +148,7 @@ const ChatbotUI = () => {
       } catch (error) {
         console.error('Error sending message:', error);
         const errorMessage = { 
-          text: error.response?.data?.detail || 'Sorry, I encountered an error. Please try again.', 
+          text: 'Sorry, I encountered an error. Please try again.',
           type: 'ai',
           isError: true 
         };
@@ -125,40 +159,28 @@ const ChatbotUI = () => {
     }
   };
 
-  const regenerateResponse = async (index) => {
-    setIsSending(true);
-    try {
-      const response = await axios.post('http://localhost:8000/regenerate/', {
-        message: messages[index].text,
-        userRole: userProfile.role
-      });
-      setMessages(prevMessages => {
-        const newMessages = [...prevMessages];
-        newMessages[index] = { ...newMessages[index], text: response.data.response };
-        return newMessages;
-      });
-    } catch (error) {
-      console.error('Error regenerating response:', error);
-    } finally {
-      setIsSending(false);
-    }
-  };
-
-
-
-  const playAudio = (text) => {
+  const playTextToSpeech = (text) => {
     const utterance = new SpeechSynthesisUtterance(text);
     speechSynthesis.speak(utterance);
   };
 
-  const handleLogout = async () => {
-    try {
-      await auth.signOut();
-      setUserProfile({ name: '', email: '', role: '', photo: '' });
-      console.log('User logged out successfully');
-      navigate('/login');
-    } catch (error) {
-      console.error('Error logging out:', error);
+  const regenerateResponse = async (index) => {
+    if (!isSending && messages[index].type === 'ai') {
+      setIsSending(true);
+      try {
+        const response = await axios.post('http://localhost:8000/chat/', {
+          message: messages[index - 1].text,
+          userRole: userProfile.role
+        });
+        
+        const newMessages = [...messages];
+        newMessages[index] = { text: response.data.response, type: 'ai' };
+        setMessages(newMessages);
+      } catch (error) {
+        console.error('Error regenerating response:', error);
+      } finally {
+        setIsSending(false);
+      }
     }
   };
 
@@ -183,9 +205,9 @@ const ChatbotUI = () => {
         {msg.type === 'ai' && !msg.isError && (
           <div className="message-actions">
             <button className="action-button" onClick={() => regenerateResponse(index)} disabled={isSending}>
-              <RefreshCw size={16} />
+              <RefreshCw size={16} className={isSending ? 'spin' : ''} />
             </button>
-            <button className="action-button" onClick={() => playAudio(msg.text)}>
+            <button className="action-button" onClick={() => playTextToSpeech(msg.text)}>
               <Volume2 size={16} />
             </button>
           </div>
@@ -193,6 +215,44 @@ const ChatbotUI = () => {
       </div>
     );
   };
+
+  const renderAnnouncements = () => (
+    <div className="announcements-panel" ref={announcementsRef}>
+      <div className="panel-header">
+        <h2>Announcements</h2>
+        <button onClick={() => setShowAnnouncements(false)}>
+          <X size={20} />
+        </button>
+      </div>
+      <div className="announcements-content">
+        {loadingAnnouncements ? (
+          <div className="loading-announcements">
+            <RefreshCw size={24} className="spin" />
+            <span>Loading announcements...</span>
+          </div>
+        ) : announcements.length === 0 ? (
+          <div className="no-announcements">
+            <AlertCircle size={24} />
+            <span>No announcements available</span>
+          </div>
+        ) : (
+          announcements.map((announcement) => (
+            <div key={announcement.id} className="announcement-item">
+              <div className="announcement-header">
+                <span className={`role-badge ${announcement.role}`}>
+                  {announcement.role.replace('_', '/')}
+                </span>
+                <span className="timestamp">
+                  {new Date(announcement.timestamp).toLocaleString()}
+                </span>
+              </div>
+              <p className="announcement-text">{announcement.text}</p>
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  );
 
   return (
     <div className="chatbot-container">
@@ -203,7 +263,10 @@ const ChatbotUI = () => {
 
       <div className="chatbot-window">
         <div className="sidebar">
-          <button className="sidebar-button" onClick={() => setShowUserPanel(!showUserPanel)}>
+          <button 
+            className={`sidebar-button ${showUserPanel ? 'active' : ''}`}
+            onClick={() => setShowUserPanel(!showUserPanel)}
+          >
             <UserCircle />
           </button>
           <button className="sidebar-button">
@@ -212,7 +275,10 @@ const ChatbotUI = () => {
           <button className="sidebar-button">
             <PlusCircle />
           </button>
-          <button className="sidebar-button" onClick={() => setShowAnnouncements(!showAnnouncements)}>
+          <button 
+            className={`sidebar-button ${showAnnouncements ? 'active' : ''}`}
+            onClick={() => setShowAnnouncements(!showAnnouncements)}
+          >
             <Bell />
           </button>
         </div>
@@ -225,36 +291,24 @@ const ChatbotUI = () => {
           <div className="input-area">
             <input
               type="text"
-              placeholder="Type a message or 'doc:' followed by a file name..."
               value={message}
               onChange={(e) => setMessage(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && sendMessage()}
+              onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && sendMessage()}
+              placeholder="Type a message or 'doc:' to request a document..."
               disabled={isSending}
             />
-            <button className="send-button" onClick={sendMessage} disabled={isSending}>
-              {isSending ? <RefreshCw size={20} className="spin" /> : <Send size={20} />}
+            <button 
+              className="send-button" 
+              onClick={sendMessage} 
+              disabled={isSending}
+            >
+              {isSending ? <RefreshCw className="spin" /> : <Send />}
             </button>
           </div>
         </div>
 
-        {showAnnouncements && renderAnnouncements()(
-          <div className="announcements-panel">
-            <div className="panel-header">
-              <h2>Announcements</h2>
-              <button onClick={() => setShowAnnouncements(false)}>
-                <X size={20} />
-              </button>
-            </div>
-            <div className="announcements-list">
-              {announcements.map((announcement, index) => (
-                <div key={index} className="announcement">
-                  {announcement}
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
+        {showAnnouncements && renderAnnouncements()}
+        
         {showUserPanel && (
           <div className="user-panel">
             <div className="panel-header">
@@ -277,6 +331,7 @@ const ChatbotUI = () => {
                 <p className="role-badge">{userProfile.role}</p>
               </div>
               <button className="logout-button" onClick={handleLogout}>
+                <LogOut size={16} />
                 Logout
               </button>
             </div>

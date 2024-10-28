@@ -11,6 +11,9 @@ from docx import Document as WordDocument  # For handling Word documents
 from openpyxl import load_workbook  # For reading and writing Excel files
 from datetime import datetime, timedelta
 import mimetypes
+from typing import Optional
+import uuid
+from firebase_admin import firestore
 
 # LangChain specific libraries for embedding, text splitting, and vector storage
 from langchain_community.embeddings import OllamaEmbeddings  # For embeddings
@@ -49,9 +52,9 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 from fuzzywuzzy import process
 
 # Initialize Firebase
-cred = credentials.Certificate(r"C:\Users\Ammar Abdulhussain\Desktop\phullstack\src\assets\test-d1e87-firebase-adminsdk-frpau-c8d7562b8b.json")
+cred = credentials.Certificate(r"C:\Users\Ammar Abdulhussain\Desktop\phullstack\src\assets\finalprj-ac971-firebase-adminsdk-m7vjk-749c7058b2.json")
 firebase_admin.initialize_app(cred, {
-    'storageBucket': 'test-d1e87.appspot.com'
+    'storageBucket': 'finalprj-ac971.appspot.com'
 })
 
 # Get a reference to the storage service and Firestore
@@ -365,6 +368,127 @@ async def chat(request: ChatRequest):
         return {"response": answer}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+    
+
+@app.get("/announcements/{role}")
+async def get_announcements(role: str):
+    """
+    Get announcements based on user role.
+    Implements role hierarchy: HOD/Dean can see all, Teachers see Teacher and Student, Students see only Student
+    """
+    try:
+        # Get Firestore database reference
+        db = firestore.client()
+        
+        # Normalize role (handle plural forms)
+        role = role.lower()
+        if role == "students":
+            role = "student"
+        elif role == "teachers":
+            role = "teacher"
+        elif role in ["hod/dean", "hod_dean", "hod/deans"]:
+            role = "hod_dean"
+        
+        # Define role hierarchy
+        role_access = {
+            'hod_dean': ['hod_dean', 'teacher', 'student'],
+            'teacher': ['teacher', 'student'],
+            'student': ['student']
+        }
+        
+        if role not in role_access:
+            raise HTTPException(status_code=400, detail=f"Invalid role specified: {role}")
+            
+        # Query announcements based on role hierarchy
+        announcements_ref = db.collection('announcements')
+        
+        # Create query
+        docs = announcements_ref.order_by('timestamp', direction=firestore.Query.DESCENDING).get()
+        
+        # Filter announcements based on role hierarchy
+        announcements = []
+        for doc in docs:
+            data = doc.to_dict()
+            data['id'] = doc.id
+            # Normalize the announcement role as well
+            announcement_role = data.get('role', '').lower()
+            if announcement_role.endswith('s'):
+                announcement_role = announcement_role[:-1]
+            if announcement_role in role_access[role]:
+                # Convert timestamp to string for JSON serialization
+                if data.get('timestamp'):
+                    data['timestamp'] = data['timestamp'].strftime('%Y-%m-%d %H:%M:%S')
+                announcements.append(data)
+            
+        return {"announcements": announcements}
+    except Exception as e:
+        logging.error(f"Error fetching announcements: {e}")
+        raise HTTPException(status_code=500, detail=f"Error fetching announcements: {str(e)}")
+
+@app.post("/announcement/")
+async def create_announcement(announcement: dict):
+    """
+    Create a new announcement with role-based access control and importance flag.
+    """
+    try:
+        db = firestore.client()
+        
+        # Normalize role
+        role = announcement["role"].lower()
+        if role == "students":
+            role = "student"
+        elif role == "teachers":
+            role = "teacher"
+        elif role in ["hod/dean", "hod_dean", "hod/deans"]:
+            role = "hod_dean"
+        
+        # Prepare announcement data
+        announcement_data = {
+            "text": announcement["text"],
+            "role": role,
+            "timestamp": firestore.SERVER_TIMESTAMP,
+            "isImportant": announcement.get("isImportant", False)
+        }
+        
+        # Add the announcement to Firestore
+        announcement_ref = db.collection('announcements').document()
+        announcement_ref.set(announcement_data)
+        
+        # If it's important, create a notification
+        if announcement_data["isImportant"]:
+            notification_data = {
+                "type": "important_announcement",
+                "announcementId": announcement_ref.id,
+                "text": announcement["text"][:100] + "..." if len(announcement["text"]) > 100 else announcement["text"],
+                "timestamp": firestore.SERVER_TIMESTAMP,
+                "role": role,
+                "read": False
+            }
+            db.collection('notifications').add(notification_data)
+        
+        return {
+            "id": announcement_ref.id,
+            "message": "Announcement created successfully",
+            "status": "success"
+        }
+    except Exception as e:
+        logging.error(f"Error creating announcement: {e}")
+        raise HTTPException(status_code=500, detail=f"Error creating announcement: {str(e)}")
+
+@app.delete("/announcement/{announcement_id}")
+async def delete_announcement(announcement_id: str):
+    """Delete an announcement by ID."""
+    try:
+        # Get Firestore database reference
+        db = firestore.client()
+        
+        # Delete the announcement document
+        db.collection('announcements').document(announcement_id).delete()
+        
+        return {"message": "Announcement deleted successfully", "status": "success"}
+    except Exception as e:
+        logging.error(f"Error deleting announcement: {e}")
+        raise HTTPException(status_code=500, detail=f"Error deleting announcement: {str(e)}")
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
