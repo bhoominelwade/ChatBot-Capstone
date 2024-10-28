@@ -5,14 +5,14 @@ import { getStorage } from "firebase/storage";
 
 
 const firebaseConfig = {
-    apiKey: "AIzaSyARAnWD_DlEX_mcji2ywc5MQzcctqOk_sE",
-    authDomain: "finalprj-ac971.firebaseapp.com",
-    projectId: "finalprj-ac971",
-    storageBucket: "finalprj-ac971.appspot.com",
-    messagingSenderId: "643444492440",
-    appId: "1:643444492440:web:3a46cb303f557f33b0a8ed",
-    measurementId: "G-2HFPEN6D04"
-  };
+  apiKey: "AIzaSyCr8VJg3-cyu-V8693hVBRPeTX9Gs8hbVo",
+  authDomain: "capstone-4eff9.firebaseapp.com",
+  projectId: "capstone-4eff9",
+  storageBucket: "capstone-4eff9.appspot.com",
+  messagingSenderId: "841107545003",
+  appId: "1:841107545003:web:808862ff4c8b47f7e250ee",
+  measurementId: "G-MHE45H8Z9Y"
+};
 
 const app = initializeApp(firebaseConfig);
 
