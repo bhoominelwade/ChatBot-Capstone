@@ -1,26 +1,25 @@
+// Imports and Dependencies
 import React, { useState, useRef, useEffect } from 'react';
+import { doc, getDoc, setDoc, deleteDoc, serverTimestamp } from 'firebase/firestore';
 import axios from 'axios';
 import { auth, db } from '../firebase';
-import { doc, getDoc } from 'firebase/firestore';
 import {
-  UserCircle,
-  MessageSquare,
-  PlusCircle,
-  Bell,
-  Send,
-  X,
-  RefreshCw,
-  Volume2,
-  Download,
-  AlertCircle,
-  LogOut
+  UserCircle, PlusCircle, Bell, Send,
+  X, RefreshCw, Volume2, Download, AlertCircle, LogOut
 } from 'lucide-react';
 import './chat.css';
 import darkblue from "../assets/darkblue.mp4";
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
+import { onAuthStateChanged, signOut } from 'firebase/auth';
+
 
 const ChatbotUI = () => {
+  // Navigation
   const navigate = useNavigate();
+  const location = useLocation();
+  const [lastNMessages] = useState(50);
+
+  // State Management
   const [message, setMessage] = useState('');
   const [messages, setMessages] = useState([
     { text: 'Hello! How can I assist you today?', type: 'ai' }
@@ -30,21 +29,64 @@ const ChatbotUI = () => {
   const [isSending, setIsSending] = useState(false);
   const [announcements, setAnnouncements] = useState([]);
   const [loadingAnnouncements, setLoadingAnnouncements] = useState(false);
+  const [expandedAnnouncements, setExpandedAnnouncements] = useState(new Set());
   const [userProfile, setUserProfile] = useState({
     name: '',
     email: '',
     role: '',
-    photo: ''
+    photo: '',
+    uid: '' // Add uid to the initial state
   });
-
   const videoRef = useRef(null);
   const chatContainerRef = useRef(null);
   const announcementsRef = useRef(null);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
 
+  useEffect(() => {
+    window.history.pushState(null, '', location.pathname);
+    window.addEventListener('popstate', () => {
+      window.history.pushState(null, '', location.pathname);
+    });
+  }, [location]);
+
+  useEffect(() => {
+    const checkAuth = () => {
+      const user = auth.currentUser;
+      if (!user) {
+        window.location.href = '/login';
+      }
+    };
+  
+    checkAuth();
+  }, []);
+
+  useEffect(() => {
+    if (chatContainerRef.current) {
+      chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
+    }
+  }, [messages]);
+
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      if (user) {
+        setIsAuthenticated(true);
+      } else {
+        setIsAuthenticated(false);
+        navigate('/login', { replace: true });
+      }
+    });
+
+    return () => unsubscribe();
+  }, [navigate]);
+
+
+
+  // User Profile Management
   useEffect(() => {
     const fetchUserProfile = async () => {
       const user = auth.currentUser;
-      if (user) {
+      if (user && isAuthenticated) {
         try {
           const userDoc = await getDoc(doc(db, 'Users', user.uid));
           if (userDoc.exists()) {
@@ -53,22 +95,20 @@ const ChatbotUI = () => {
               name: userData.name,
               email: user.email,
               role: userData.role,
-              photo: userData.photo || ''
+              photo: userData.photo || '',
+              uid: user.uid
             });
           }
         } catch (error) {
           console.error('Error fetching user profile:', error);
         }
-      } else {
-        navigate('/login');
       }
     };
 
     fetchUserProfile();
-  }, [navigate]);
+  }, [isAuthenticated]);
 
-  
-
+  // Announcements Management
   useEffect(() => {
     if (showAnnouncements && userProfile.role) {
       fetchAnnouncements();
@@ -78,7 +118,6 @@ const ChatbotUI = () => {
   const fetchAnnouncements = async () => {
     setLoadingAnnouncements(true);
     try {
-      // Make sure to normalize the role as the backend expects
       const normalizedRole = userProfile.role.toLowerCase().replace('/', '_').replace(' ', '_');
       const response = await axios.get(`http://localhost:8000/announcements/${normalizedRole}`);
       
@@ -93,47 +132,79 @@ const ChatbotUI = () => {
     } finally {
       setLoadingAnnouncements(false);
     }
-  };
+};
 
-  const handlePanelClick = (panel) => {
-    if (panel === 'user') {
-      setShowUserPanel(true);
-      setShowAnnouncements(false);
-    } else if (panel === 'announcements') {
-      setShowAnnouncements(true);
-      setShowUserPanel(false);
+const toggleAnnouncement = (id) => {
+  setExpandedAnnouncements(prev => {
+    const newSet = new Set(prev);
+    if (newSet.has(id)) {
+      newSet.delete(id);
+    } else {
+      newSet.add(id);
     }
-  };
+    return newSet;
+  });
+};
+
+const clearChat = async () => {
+  const initialMessage = { text: 'Hello! How can I assist you today?', type: 'ai' };
+  setMessages([initialMessage]);
   
-  // Add this useEffect to fetch announcements when component mounts and when userProfile changes
-  useEffect(() => {
-    if (userProfile.role) {
-      fetchAnnouncements();
+  // Clear from Firestore too
+  try {
+    const user = auth.currentUser;
+    if (user) {
+      await setDoc(doc(db, 'chatHistory', user.uid), {
+        messages: [initialMessage],
+        updatedAt: serverTimestamp(),
+        userId: user.uid
+      });
     }
-  }, [userProfile.role]);
+  } catch (error) {
+    console.error('Error clearing chat history:', error);
+  }
+};
 
-  useEffect(() => {
-    if (announcementsRef.current && loadingAnnouncements === false) {
-      announcementsRef.current.scrollTop = 0;
-    }
-  }, [announcements, loadingAnnouncements]);
+  // Authentication
+  
 
+  // Modified logout handler
   const handleLogout = async () => {
     try {
-      await auth.signOut();
-      navigate('/login');
+      // Sign out from Firebase
+      await signOut(auth);
+      
+      // Clear state
+      setMessages([{ text: 'Hello! How can I assist you today?', type: 'ai' }]);
+      setUserProfile({
+        name: '',
+        email: '',
+        role: '',
+        photo: '',
+        uid: ''
+      });
+      setShowUserPanel(false);
+      setShowAnnouncements(false);
+      
+      // Clear storage
+      localStorage.clear();
+      sessionStorage.clear();
+      
+      // Force a complete page refresh and redirect
+      window.location.href = '/login';
     } catch (error) {
-      console.error('Error logging out:', error);
+      console.error('Logout error:', error);
     }
   };
 
+  // Message Handling
   const sendMessage = async () => {
     if (message.trim() && !isSending) {
       const userMessage = { text: message, type: 'user' };
       setMessages(prevMessages => [...prevMessages, userMessage]);
       setMessage('');
       setIsSending(true);
-
+  
       try {
         if (message.startsWith('doc:')) {
           const fileName = message.slice(4).trim();
@@ -157,7 +228,147 @@ const ChatbotUI = () => {
             };
             setMessages(prevMessages => [...prevMessages, botMessage]);
           }
-        } else {
+        } 
+        else if (message.toLowerCase().startsWith('book:')) {
+          // Parse the booking request
+          const bookingDetails = message.slice(5).trim().split(' ');
+          if (bookingDetails.length < 3) {
+            const helpMessage = { 
+              text: 'Please use the format: book: teacher_name YYYY-MM-DD HH:MM\nFor example: book: John Doe 2024-11-05 14:00', 
+              type: 'ai' 
+            };
+            setMessages(prevMessages => [...prevMessages, helpMessage]);
+          } else {
+            // Extract booking details - handle names with spaces
+            const timeIndex = bookingDetails.length - 1;
+            const dateIndex = bookingDetails.length - 2;
+            const teacherName = bookingDetails.slice(0, dateIndex).join(' ');
+            const date = bookingDetails[dateIndex];
+            const time = bookingDetails[timeIndex];
+        
+            try {
+              const formData = new FormData();
+              formData.append("teacher_name", teacherName);
+              formData.append("student_id", auth.currentUser.uid);
+              formData.append("date", date);
+              formData.append("time", time);
+        
+              const response = await axios.post(
+                'http://localhost:8000/book-meeting/',
+                formData,
+                {
+                  headers: {
+                    'Content-Type': 'multipart/form-data',
+                  },
+                }
+              );
+        
+              let botMessage;
+              if (response.data.success) {
+                botMessage = {
+                  text: `✅ Meeting scheduled successfully with ${teacherName} on ${date} at ${time}`,
+                  type: 'ai'
+                };
+              } else {
+                let messageText = `❌ ${response.data.message}\n\nAvailable slots for ${date}:\n`;
+                if (response.data.available_slots && response.data.available_slots.length > 0) {
+                  messageText += response.data.available_slots.join('\n');
+                } else {
+                  messageText += "No available slots for this day.";
+                }
+                botMessage = { text: messageText, type: 'ai' };
+              }
+              setMessages(prevMessages => [...prevMessages, botMessage]);
+            } catch (error) {
+              console.error('Error booking meeting:', error);
+              const errorMessage = {
+                text: error.response?.data?.detail || "Failed to schedule meeting. Please try again or contact support.",
+                type: 'ai',
+                isError: true
+              };
+              setMessages(prevMessages => [...prevMessages, errorMessage]);
+            }
+          }
+        }
+        else if (message.toLowerCase().startsWith('meetings:')) {
+          // View scheduled meetings
+          try {
+            const response = await axios.get(`http://localhost:8000/meetings/${auth.currentUser.uid}`);
+            if (response.data.meetings && response.data.meetings.length > 0) {
+              let meetingsText = "Your scheduled meetings:\n\n";
+              response.data.meetings.forEach((meeting, index) => {
+                meetingsText += `${index + 1}. With: ${meeting.teacher_name}\n   Date: ${meeting.date}\n   Time: ${meeting.time}\n   Status: ${meeting.status}\n\n`;
+              });
+              const meetingsMessage = { text: meetingsText, type: 'ai' };
+              setMessages(prevMessages => [...prevMessages, meetingsMessage]);
+            } else {
+              const noMeetingsMessage = { 
+                text: "You don't have any scheduled meetings.", 
+                type: 'ai' 
+              };
+              setMessages(prevMessages => [...prevMessages, noMeetingsMessage]);
+            }
+          } catch (error) {
+            console.error('Error fetching meetings:', error);
+            const errorMessage = {
+              text: "Failed to fetch meetings. Please try again.",
+              type: 'ai',
+              isError: true
+            };
+            setMessages(prevMessages => [...prevMessages, errorMessage]);
+          }
+        }
+        else if (message.toLowerCase().startsWith('timetable:')) {
+          const teacherName = message.slice(10).trim();
+          try {
+            // First get teacher ID
+            const teacherResponse = await axios.get('http://localhost:8000/teachers/');
+            const teacher = teacherResponse.data.teachers.find(t => 
+              t.name.toLowerCase() === teacherName.toLowerCase()
+            );
+            
+            if (!teacher) {
+              const botMessage = { 
+                text: `Teacher "${teacherName}" not found`,
+                type: 'ai',
+                isError: true
+              };
+              setMessages(prevMessages => [...prevMessages, botMessage]);
+              return;
+            }
+
+            // Get timetable
+            const response = await axios.get(`http://localhost:8000/timetable/${teacher.id}`);
+            if (response.data.success) {
+              let timetableText = `Timetable for ${teacherName}:\n\n`;
+              Object.entries(response.data.timetable).forEach(([day, slots]) => {
+                timetableText += `${day}:\n`;
+                Object.entries(slots).forEach(([time, activity]) => {
+                  timetableText += `  ${time}: ${activity}\n`;
+                });
+                timetableText += '\n';
+              });
+              const botMessage = { text: timetableText, type: 'ai' };
+              setMessages(prevMessages => [...prevMessages, botMessage]);
+            } else {
+              const botMessage = { 
+                text: response.data.message,
+                type: 'ai',
+                isError: true
+              };
+              setMessages(prevMessages => [...prevMessages, botMessage]);
+            }
+          } catch (error) {
+            console.error('Error fetching timetable:', error);
+            const errorMessage = {
+              text: "Failed to fetch timetable. Please try again.",
+              type: 'ai',
+              isError: true
+            };
+            setMessages(prevMessages => [...prevMessages, errorMessage]);
+          }
+        }
+        else {
           const response = await axios.post('http://localhost:8000/chat/', {
             message,
             userRole: userProfile.role
@@ -204,17 +415,54 @@ const ChatbotUI = () => {
     }
   };
 
+  const formatTimestamp = (timestamp) => {
+    if (!timestamp) return '';
+    
+    try {
+      const [date, time] = timestamp.split(' ');
+      const [day, month, year] = date.split('/');
+      
+      const months = [
+        'January', 'February', 'March', 'April', 'May', 'June',
+        'July', 'August', 'September', 'October', 'November', 'December'
+      ];
+      
+      const [hours, minutes] = time.split(':');
+      const formattedTime = `${hours.padStart(2, '0')}:${minutes.padStart(2, '0')}`;
+      
+      return `${day} ${months[parseInt(month) - 1]} ${year} • ${formattedTime}`;
+    } catch (error) {
+      console.error('Error formatting timestamp:', error);
+      return timestamp; // Return original if parsing fails
+    }
+  };
+
+  // Panel Management
+  const handlePanelClick = (panel) => {
+    if (panel === 'user') {
+      setShowUserPanel(true);
+      setShowAnnouncements(false);
+    } else if (panel === 'announcements') {
+      setShowAnnouncements(true);
+      setShowUserPanel(false);
+    }
+  };
+
+  // UI Rendering Functions
   const renderMessage = (msg, index) => {
+    // Ensure text is a string and handle undefined/null cases
+    const messageText = String(msg?.text || '');
+    
     return (
       <div key={index} className={`message-container ${msg.type === 'user' ? 'user-message-container' : 'ai-message-container'}`}>
         <div className={`message ${msg.type === 'user' ? 'user-message' : 'ai-message'} ${msg.isError ? 'error-message' : ''}`}>
-          {msg.text.startsWith('doc:') ? (
+          {messageText && messageText.toLowerCase().startsWith('doc:') ? (
             <>
               <span className="doc-highlight">doc:</span>
-              {msg.text.slice(4)}
+              {messageText.slice(4)}
             </>
           ) : (
-            <pre className="message-content">{msg.text}</pre>
+            <pre className="message-content">{messageText}</pre>
           )}
           {msg.downloadUrl && (
             <a href={msg.downloadUrl} target="_blank" rel="noopener noreferrer" className="download-link">
@@ -227,7 +475,7 @@ const ChatbotUI = () => {
             <button className="action-button" onClick={() => regenerateResponse(index)} disabled={isSending}>
               <RefreshCw size={16} className={isSending ? 'spin' : ''} />
             </button>
-            <button className="action-button" onClick={() => playTextToSpeech(msg.text)}>
+            <button className="action-button" onClick={() => playTextToSpeech(messageText)}>
               <Volume2 size={16} />
             </button>
           </div>
@@ -260,27 +508,23 @@ const ChatbotUI = () => {
             <div 
               key={announcement.id} 
               className={`announcement-item ${announcement.isImportant ? 'important' : ''}`}
+              onClick={() => toggleAnnouncement(announcement.id)}
             >
               <div className="announcement-header">
                 <span className={`role-badge ${announcement.role}`}>
                   {announcement.role.replace('_', '/')}
                 </span>
                 <span className="timestamp">
-                  {new Date(announcement.timestamp).toLocaleString('en-IN', {
-                    timeZone: 'Asia/Kolkata',
-                    year: 'numeric',
-                    month: 'numeric',
-                    day: 'numeric',
-                    hour: '2-digit',
-                    minute: '2-digit',
-                    hour12: true
-                  })}
+                  {announcement.timestamp}
                 </span>
               </div>
               {announcement.isImportant && (
                 <div className="important-badge">Important</div>
               )}
-              <p className="announcement-text">{announcement.text}</p>
+              <h4 className="announcement-title">{announcement.title}</h4>
+              {expandedAnnouncements.has(announcement.id) && (
+                <pre className="announcement-text">{announcement.text}</pre>
+              )}
             </div>
           ))
         )}
@@ -288,14 +532,17 @@ const ChatbotUI = () => {
     </div>
   );
 
+  // Main Render
   return (
     <div className="chatbot-container">
+      {/* Background Video */}
       <video ref={videoRef} id="background-video" loop autoPlay muted>
         <source src={darkblue} type="video/mp4" />
         Your browser does not support the video tag.
       </video>
 
       <div className="chatbot-window">
+        {/* Sidebar */}
         <div className="sidebar">
           <button 
             className={`sidebar-button ${showUserPanel ? 'active' : ''}`}
@@ -303,10 +550,11 @@ const ChatbotUI = () => {
           >
             <UserCircle />
           </button>
-          <button className="sidebar-button">
-            <MessageSquare />
-          </button>
-          <button className="sidebar-button">
+          <button 
+            className="sidebar-button"
+            onClick={clearChat}
+            title="Clear chat"
+          >
             <PlusCircle />
           </button>
           <button 
@@ -317,6 +565,7 @@ const ChatbotUI = () => {
           </button>
         </div>
 
+        {/* Main Chat Area */}
         <div className="main-content" style={{ marginRight: (showAnnouncements || showUserPanel) ? '320px' : '0' }}>
           <div className="chat-area" ref={chatContainerRef}>
             {messages.map((msg, index) => renderMessage(msg, index))}
@@ -341,35 +590,35 @@ const ChatbotUI = () => {
           </div>
         </div>
 
+        {/* Panels */}
         {showAnnouncements && renderAnnouncements()}
-        
         {showUserPanel && (
           <div className="user-panel">
-            <div className="panel-header">
-              <h2>Profile</h2>
-              <button onClick={() => setShowUserPanel(false)}>
-                <X size={20} />
-              </button>
-            </div>
-            <div className="profile-content">
-              <div className="profile-avatar">
-                {userProfile.photo ? (
-                  <img src={userProfile.photo} alt="User Avatar" />
-                ) : (
-                  <UserCircle size={64} />
-                )}
-              </div>
-              <div className="profile-info">
-                <h3>{userProfile.name}</h3>
-                <p>{userProfile.email}</p>
-                <p className="role-badge">{userProfile.role}</p>
-              </div>
-              <button className="logout-button" onClick={handleLogout}>
-                <LogOut size={16} />
-                Logout
-              </button>
-            </div>
+          <div className="panel-header">
+            <h2>Profile</h2>
+            <button onClick={() => setShowUserPanel(false)}>
+              <X size={20} />
+            </button>
           </div>
+          <div className="profile-content">
+            <div className="profile-avatar">
+              {userProfile.photo ? (
+                <img src={userProfile.photo} alt="User Avatar" />
+              ) : (
+                <UserCircle size={64} />
+              )}
+            </div>
+            <div className="profile-info">
+              <h3>{userProfile.name}</h3>
+              <p>{userProfile.email}</p>
+              <p className="role-badge">{userProfile.role}</p>
+            </div>
+            <button className="logout-button" onClick={handleLogout}>
+              <LogOut size={16} />
+              Logout
+            </button>
+          </div>
+        </div>
         )}
       </div>
     </div>

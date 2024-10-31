@@ -1,16 +1,14 @@
 import React, { useState, useRef, useEffect, Suspense } from "react";
 import { Github, Mail } from "lucide-react";
 import { createUserWithEmailAndPassword, signInWithEmailAndPassword } from "firebase/auth";
-import { setDoc, doc } from "firebase/firestore";
-import { auth, db } from "./firebase"; // Ensure this imports your Firebase configuration
+import { setDoc, doc, getDoc } from "firebase/firestore";
+import { auth, db } from "./firebase";
 import "./LoginSignup.css";
 import darkblue from "./assets/darkblue.mp4";
 import { useNavigate } from 'react-router-dom';
 
-
 const AdminDashboard = React.lazy(() => import("./admin/AdminDashboard"));
 const Chat = React.lazy(() => import("./user/chat"));
-
 
 export default function LoginSignup() {
   const [isLogin, setIsLogin] = useState(true);
@@ -25,7 +23,18 @@ export default function LoginSignup() {
   const [userRole, setUserRole] = useState("");
 
   const videoRef = useRef(null);
-  const navigate = useNavigate(); 
+  const navigate = useNavigate();
+
+  const initializeSession = (user, userRole) => {
+    localStorage.setItem('isAuthenticated', 'true');
+    localStorage.setItem('userRole', userRole);
+    localStorage.setItem('userId', user.uid);
+    localStorage.setItem('userEmail', user.email);
+    
+    // Set session timeout
+    const sessionTimeout = new Date().getTime() + (3600000); // 1 hour from now
+    localStorage.setItem('sessionTimeout', sessionTimeout);
+  };
 
   useEffect(() => {
     if (videoRef.current) {
@@ -35,59 +44,122 @@ export default function LoginSignup() {
     }
   }, []);
 
+  const checkUserRole = async (uid) => {
+    try {
+      const userDoc = await getDoc(doc(db, 'Users', uid));
+      if (userDoc.exists()) {
+        const userData = userDoc.data();
+        return userData.role;
+      }
+      return null;
+    } catch (error) {
+      console.error("Error checking user role:", error);
+      return null;
+    }
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
     setSuccess('');
 
-    if (isLogin) {
-      // Hardcoded Admin Login
-      if (email === 'admin@test.com' && password === 'admin1234') {
-        setSuccess('Admin logged in successfully!');
-        setIsLoggedIn(true);
-        setUserRole('admin');
-        navigate('/admin'); // Redirect to Admin Dashboard
-        return;
-      }
+    try {
+      if (isLogin) {
+        // Login flow
+        const userCredential = await signInWithEmailAndPassword(auth, email, password);
+        const user = userCredential.user;
+        
+        // Check user role from Firestore
+        const userRole = await checkUserRole(user.uid);
+        
+        if (!userRole) {
+          setError('User role not found');
+          return;
+        }
 
-      // Regular user login via Firebase
-      try {
-        await signInWithEmailAndPassword(auth, email, password);
+        // Initialize session
+        initializeSession(user, userRole);
+
         setSuccess('Logged in successfully!');
         setIsLoggedIn(true);
-        setUserRole('user');
-        navigate('/chat'); // Redirect to Chat for users
-      } catch (error) {
-        setError(error.message);
-      }
-    } else {
-      // Sign up logic for regular users
-      if (password !== confirmPassword) {
-        setError('Passwords do not match');
-        return;
-      }
+        setUserRole(userRole);
+        
+        // Navigate based on role with replace
+        if (userRole === 'admin') {
+          navigate('/admin', { replace: true });
+        } else {
+          navigate('/chat', { replace: true });
+        }
+      } else {
+        // Sign up flow
+        if (password !== confirmPassword) {
+          setError('Passwords do not match');
+          return;
+        }
 
-      try {
         const userCredential = await createUserWithEmailAndPassword(auth, email, password);
         const user = userCredential.user;
 
-        // Save additional user data to Firestore
+        // Save user data to Firestore
         await setDoc(doc(db, 'Users', user.uid), {
           email: user.email,
           name: name,
           role: role,
-          photo: '' // Add a default photo URL if needed
+          photo: '',
+          createdAt: new Date().toISOString(),
+          lastLogin: new Date().toISOString()
         });
+
+        // Initialize session
+        initializeSession(user, role);
 
         setSuccess('Account created successfully!');
         setIsLoggedIn(true);
         setUserRole(role);
-        navigate(role === 'admin' ? '/admin' : '/chat'); // Navigate based on role
-      } catch (error) {
-        setError(error.message);
+        navigate(role === 'admin' ? '/admin' : '/chat', { replace: true });
       }
+    } catch (error) {
+      console.error('Authentication error:', error);
+      setError(error.message);
     }
   };
+
+  useEffect(() => {
+    const checkSession = () => {
+      const isAuthenticated = localStorage.getItem('isAuthenticated');
+      const sessionTimeout = localStorage.getItem('sessionTimeout');
+      const currentTime = new Date().getTime();
+
+      if (isAuthenticated && sessionTimeout) {
+        if (currentTime > parseInt(sessionTimeout)) {
+          // Session expired
+          localStorage.clear();
+          setError('Session expired. Please login again.');
+        } else {
+          // Valid session - redirect to appropriate page
+          const userRole = localStorage.getItem('userRole');
+          if (userRole === 'admin') {
+            navigate('/admin', { replace: true });
+          } else {
+            navigate('/chat', { replace: true });
+          }
+        }
+      }
+    };
+
+    checkSession();
+  }, [navigate]);
+
+  // Add prevent back button effect
+  useEffect(() => {
+    window.history.pushState(null, '', window.location.pathname);
+    const handlePopState = () => {
+      window.history.pushState(null, '', window.location.pathname);
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
 
   return (
     <div className="overlay">
